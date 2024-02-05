@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
-from acc_types import Acceleration
+from models import Acceleration
 """Annotate Acceleration Data From Accelerometer And Save data as CSV file"""
 
 

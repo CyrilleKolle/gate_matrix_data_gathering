@@ -8,14 +8,11 @@ locally and save into a csv file on the  ctrl+c exit signal.
 
 Install Bleak before running the script by
 
-.. code:: bash
-
-    pip install bleak
+    pip install -r requirements.txt
 
 
 Usage:
 
-.. code:: bash
 
-    python sensor.py
+    python3 -m src/movesensor.py
 

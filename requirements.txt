@@ -1,1 +1,2 @@
-fastapi
+PyQt6
+bleak

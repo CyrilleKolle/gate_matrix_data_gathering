@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QThread
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .models import Acceleration
+from models import Acceleration
 from annotation import AnnotateAccelerometerData
 
 SENSOR_ID = "223430000278"
@@ -281,7 +281,7 @@ if __name__ == "__main__":
 
     annotation.show()
     logging.basicConfig(level=logging.INFO)
-    # asyncio.run(main(SENSOR_ID, thread_instance.data_received))
+    asyncio.run(main(SENSOR_ID, thread_instance.data_received))
 
     app.exec()
 
