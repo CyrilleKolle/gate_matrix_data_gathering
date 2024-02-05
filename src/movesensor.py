@@ -40,14 +40,13 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QThread
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from acc_types import Acceleration
+from .models import Acceleration
 from annotation import AnnotateAccelerometerData
 
 SENSOR_ID = "223430000278"
 WRITE_CHARACTERISTIC_UUID = "34800001-7185-4d5d-b431-630e7050e8f0"
 NOTIFY_CHARACTERISTIC_UUID = "34800002-7185-4d5d-b431-630e7050e8f0"
 DATA_POINTS = []
-
 
 
 class DataView:
@@ -190,7 +189,7 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue, data_received
 
     if found:
         async with BleakClient(
-            address, disconnected_callback=disconnect_callback
+                address, disconnected_callback=disconnect_callback
         ) as client:
 
             loop = asyncio.get_event_loop()
@@ -249,25 +248,26 @@ async def main(end_of_serial: str, data_received_signal: pyqtSignal):
     await asyncio.gather(client_task, consumer_task)
     logger.info("Main method done!")
 
+
 # def run_asyncio_loop(end_of_serial: str):
 #     asyncio.run(main(end_of_serial=end_of_serial))
 class ThreadManager(QObject):
     data_received = pyqtSignal(Acceleration)
-    
+
     def __init__(self):
         super().__init__()
         self.thread = QThread()
         self.moveToThread(self.thread)
         self.thread.started.connect(self.run_asyncio_loop)
         self.thread.start()
-    
+
     def run_asyncio_loop(self):
         asyncio.run(main(SENSOR_ID, self.data_received))
-        
+
     def stop(self):
         self.thread.quit()
         self.thread.wait()
-        
+
     def __del__(self):
         self.stop()
 
@@ -278,18 +278,15 @@ if __name__ == "__main__":
     thread_instance = ThreadManager()
     annotation = AnnotateAccelerometerData()
     # thread_instance.data_received.connect(annotation.on_data_received)
-    
+
     annotation.show()
     logging.basicConfig(level=logging.INFO)
     # asyncio.run(main(SENSOR_ID, thread_instance.data_received))
-    
+
     app.exec()
-    
 
     # threading.Thread(target=run_asyncio_loop, args=(SENSOR_ID,), daemon=True).start()
     # sys.exit(app.exec())
-
-
 
 """
 Application Flow
