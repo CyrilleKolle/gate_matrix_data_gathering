@@ -143,7 +143,9 @@ async def run_queue_consumer(queue: asyncio.Queue):
             DATA_POINTS.append(data)
 
 
-async def run_ble_client(end_of_serial: str, queue: asyncio.Queue, data_received_signal: pyqtSignal):
+async def run_ble_client(
+    end_of_serial: str, queue: asyncio.Queue, data_received_signal: pyqtSignal
+):
     # Check the device is available
     devices = await discover()
     found = False
@@ -189,7 +191,7 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue, data_received
 
     if found:
         async with BleakClient(
-                address, disconnected_callback=disconnect_callback
+            address, disconnected_callback=disconnect_callback
         ) as client:
 
             loop = asyncio.get_event_loop()

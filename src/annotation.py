@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
 from models import Acceleration
+
 """Annotate Acceleration Data From Accelerometer And Save data as CSV file"""
 
 
@@ -52,7 +53,7 @@ class AnnotateAccelerometerData(QMainWindow):
     def not_fall_button_clicked(self):
         self.fall_state = "Stop"
         print("Not Fall", self.fall_state)
-        
+
     def on_data_received(self, acceleration: Acceleration):
         print(acceleration)
 
@@ -61,4 +62,3 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = AnnotateAccelerometerData()
     window.show()
-

@@ -96,7 +96,7 @@ def save_as_csv():
     current_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     with open(f"sensor_data{current_timestamp}.csv", "w", newline="") as file:
         writer = csv.writer(file)
-        head = ["timestamp", "ax", "ay", "az","recorded_at"]
+        head = ["timestamp", "ax", "ay", "az", "recorded_at"]
         writer.writerow(head)
 
         for field in DATA_POINTS:
