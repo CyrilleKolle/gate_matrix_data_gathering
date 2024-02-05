@@ -1,31 +1,58 @@
-"""BLE Sensor data
+"""BLE Sensor data retrieval
 
-Install Bleak before running the script.
-https://github.com/hbldh/bleak
+The script will configure the native BLE sensor in central configuration and scan for
+the sensor ending with given SENSOR_ID. Once a new sensor is found then initiates the
+connection, set the command characteristics values and enable notification service.
+All the binary data packet will be parsed and sensor payload objects will be stored
+locally and save into a csv file on the  ctrl+c exit signal.
+
+Install Bleak before running the script by
+
+.. code:: bash
+
+    pip install bleak
+
+
+Usage:
+
+.. code:: bash
+
+    python sensor.py
+
+
 """
+
 import asyncio
 import csv
-import dataclasses
 import logging
 import signal
 import struct
+import sys
+import threading
 from functools import reduce
+from datetime import datetime
 
 from bleak import BleakClient
 from bleak import _logger as logger
 from bleak import discover
-from datetime import datetime
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtWidgets import QApplication
+
+from models import Acceleration
+from annotation import AnnotateAccelerometerData
+from src.binary_parser import DataView
 
 SENSOR_ID = "223430000278"
 WRITE_CHARACTERISTIC_UUID = "34800001-7185-4d5d-b431-630e7050e8f0"
 NOTIFY_CHARACTERISTIC_UUID = "34800002-7185-4d5d-b431-630e7050e8f0"
+DATA_POINTS = []
 
 
 class DataView:
     def __init__(self, array, bytes_per_element=1):
         """
         bytes_per_element is the size of each element in bytes.
-        By default we are assume the array is one byte per element.
+        By default, we assume the array is one byte per element.
         """
         self.array = array
         self.bytes_per_element = 1
@@ -78,37 +105,33 @@ class DataView:
         return result
 
 
-@dataclasses.dataclass
-class Acceleration:
-    timestamp: int
-    ax: float
-    ay: float
-    az: float
+# @dataclasses.dataclass
+# class Acceleration:
+#     timestamp: int
+#     timestamp_local: str
+#     ax: float
+#     ay: float
+#     az: float
+#     fall_state: str
 
-    def as_csv_field(self):
-        return [self.timestamp, self.ax, self.ay, self.az]
-
-
-DATA_POINTS = []
+#     def as_csv_field(self):
+#         return [self.timestamp, self.timestamp_local, self.ax, self.ay, self.az, self.fall_state]
 
 
 def save_as_csv():
-    current_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    with open(f"sensor_data{current_timestamp}.csv", "w", newline="") as file:
+    with open(f"sensor_data_{datetime.now()}.csv", "w", newline="") as file:
         writer = csv.writer(file)
-        head = ["timestamp", "ax", "ay", "az","recorded_at"]
+        head = ["timestamp", "timestamp_local", "ax", "ay", "az", "fall_state"]
         writer.writerow(head)
 
         for field in DATA_POINTS:
-            row = field.as_csv_field()
-            row.append(current_timestamp)
-            writer.writerow(row)
+            writer.writerow(field.as_csv_field())
 
 
-async def run_queue_consumer(queue: asyncio.Queue):
+async def run_queue_consumer(queue: asyncio.Queue, stop_signal: pyqtSignal):
     while True:
         data = await queue.get()
-        if data is None:
+        if data is None or thread_instance.stop_event.is_set:
             save_as_csv()
             logger.info(
                 "Got message from client about disconnection. Exiting consumer loop..."
@@ -119,7 +142,9 @@ async def run_queue_consumer(queue: asyncio.Queue):
             DATA_POINTS.append(data)
 
 
-async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
+async def run_ble_client(
+    end_of_serial: str, queue: asyncio.Queue, data_received_signal: pyqtSignal
+):
     # Check the device is available
     devices = await discover()
     found = False
@@ -135,8 +160,8 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
     # This event is set if device disconnects or ctrl+c is pressed
     disconnected_event = asyncio.Event()
 
-    def raise_graceful_exit(*args):
-        disconnected_event.set()
+    # def raise_graceful_exit(*args):
+    #     disconnected_event.set()
 
     def disconnect_callback(client):
         logger.info("Disconnected callback called!")
@@ -144,20 +169,22 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
 
     async def notification_handler(sender, data):
         """Simple notification handler which prints the data received."""
-        # print(data)
         d = DataView(data)
         # Dig data from the binary
         msg = "Data: ts: {}, ax: {}, ay: {}, az: {}".format(
             d.get_uint_32(2), d.get_float_32(6), d.get_float_32(10), d.get_float_32(14)
         )
-        print(msg)
+        # print(msg)
 
         acc_data = Acceleration(
             timestamp=d.get_uint_32(2),
+            timestamp_local=(str(datetime.now())),
             ax=d.get_float_32(6),
             ay=d.get_float_32(10),
             az=d.get_float_32(14),
+            fall_state=annotation.fall_state,
         )
+        data_received_signal.emit(acc_data)
         # queue message for later consumption
         await queue.put(acc_data)
 
@@ -165,11 +192,10 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
         async with BleakClient(
             address, disconnected_callback=disconnect_callback
         ) as client:
-
             loop = asyncio.get_event_loop()
             # Add signal handler for ctrl+c
-            signal.signal(signal.SIGINT, raise_graceful_exit)
-            signal.signal(signal.SIGTERM, raise_graceful_exit)
+            # signal.signal(signal.SIGINT, raise_graceful_exit)
+            # signal.signal(signal.SIGTERM, raise_graceful_exit)
 
             # Start notifications and subscribe to acceleration @ 13Hz
             logger.info("Enabling notifications")
@@ -191,7 +217,7 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
                 "Disconnect set by ctrl+c or real disconnect event. Check Status:"
             )
 
-            # Check the conection status to infer if the device disconnected or crtl+c was pressed
+            # Check the connection status to infer if the device disconnected or crtl+c was pressed
             status = client.is_connected
             logger.info("Connected: {}".format(status))
 
@@ -215,14 +241,73 @@ async def run_ble_client(end_of_serial: str, queue: asyncio.Queue):
         print("Sensor  ******" + end_of_serial, "not found!")
 
 
-async def main(end_of_serial: str):
+async def main(end_of_serial: str, data_received_signal: pyqtSignal):
     queue = asyncio.Queue()
-    client_task = run_ble_client(end_of_serial, queue)
+    client_task = run_ble_client(end_of_serial, queue, data_received_signal)
     consumer_task = run_queue_consumer(queue)
     await asyncio.gather(client_task, consumer_task)
-    logger.info("Main method done.")
+    logger.info("Main method done!")
+
+
+# def run_asyncio_loop(end_of_serial: str):
+#     asyncio.run(main(end_of_serial=end_of_serial))
+class ThreadManager(QObject):
+    data_received = pyqtSignal(Acceleration)
+
+    def __init__(self):
+        super().__init__()
+        self.thread = QThread()
+        self.stop_event = asyncio.Event()
+        self.moveToThread(self.thread)
+        self.thread.started.connect(self.run_asyncio_loop)
+        self.stop_signal.connect(self.set_stop_event)
+        self.thread.start()
+
+    def run_asyncio_loop(self):
+        asyncio.run(main(SENSOR_ID, self.data_received, self.stop_signal))
+
+    def set_stop_event(self):
+        self.stop_event.set()
+        asyncio.run(main(SENSOR_ID, self.data_received))
+
+    def stop(self):
+        self.stop_signal.emit()
+        self.thread.quit()
+        self.thread.wait()
+
+    def __del__(self):
+        self.stop()
+
+
+async def main(
+    end_of_serial: str, data_received_signal: pyqtSignal, stop_signal: pyqtSignal
+):
+    queue = asyncio.Queue()
+    client_task = run_ble_client(end_of_serial, queue, data_received_signal)
+    consumer_task = run_queue_consumer(queue, stop_signal)
+    await asyncio.gather(client_task, consumer_task)
+    logger.info("Main method done!")
+
+
+# def run_asyncio_loop(end_of_serial: str):
+#     asyncio.run(main(end_of_serial=end_of_serial))
 
 
 if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+    thread_instance = ThreadManager()
+
+    annotation = AnnotateAccelerometerData()
+
+    thread_instance.data_received.connect(annotation.on_data_received)
+
+    annotation.show()
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main(SENSOR_ID))
+    # asyncio.run(main(SENSOR_ID, thread_instance.data_received))
+
+    app.aboutToQuit.connect(thread_instance.stop)
+    app.exec()
+
+    # threading.Thread(target=run_asyncio_loop, args=(SENSOR_ID,), daemon=True).start()
+    # sys.exit(app.exec())
