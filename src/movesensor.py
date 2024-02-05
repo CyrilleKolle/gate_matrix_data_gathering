@@ -22,19 +22,21 @@ Usage:
 
 """
 
-import sys
 import asyncio
 import csv
 import logging
 import signal
+import struct
+import sys
+import threading
+from functools import reduce
 from datetime import datetime
 
 from bleak import BleakClient
 from bleak import _logger as logger
 from bleak import discover
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QThread
-from PyQt6.QtCore import QObject, pyqtSignal
 
 from models import Acceleration
 from annotation import AnnotateAccelerometerData
@@ -44,6 +46,76 @@ SENSOR_ID = "223430000278"
 WRITE_CHARACTERISTIC_UUID = "34800001-7185-4d5d-b431-630e7050e8f0"
 NOTIFY_CHARACTERISTIC_UUID = "34800002-7185-4d5d-b431-630e7050e8f0"
 DATA_POINTS = []
+
+
+class DataView:
+    def __init__(self, array, bytes_per_element=1):
+        """
+        bytes_per_element is the size of each element in bytes.
+        By default, we assume the array is one byte per element.
+        """
+        self.array = array
+        self.bytes_per_element = 1
+
+    def __get_binary(self, start_index, byte_count, signed=False):
+        integers = [self.array[start_index + x] for x in range(byte_count)]
+        bytes = [
+            integer.to_bytes(self.bytes_per_element, byteorder="little", signed=signed)
+            for integer in integers
+        ]
+        return reduce(lambda a, b: a + b, bytes)
+
+    def get_uint_16(self, start_index):
+        bytes_to_read = 2
+        return int.from_bytes(
+            self.__get_binary(start_index, bytes_to_read), byteorder="little"
+        )
+
+    def get_uint_8(self, start_index):
+        bytes_to_read = 1
+        return int.from_bytes(
+            self.__get_binary(start_index, bytes_to_read), byteorder="little"
+        )
+
+    def get_uint_32(self, start_index):
+        bytes_to_read = 4
+        binary = self.__get_binary(start_index, bytes_to_read)
+        return struct.unpack("<I", binary)[0]  # <f for little endian
+
+    def get_float_32(self, start_index):
+        bytes_to_read = 4
+        binary = self.__get_binary(start_index, bytes_to_read)
+        return struct.unpack("<f", binary)[0]  # <f for little endian
+
+    def get_int_32(self, start_index):
+        bytes_to_read = 4
+        binary = self.__get_binary(start_index, bytes_to_read)
+        return struct.unpack("<i", binary)[0]  # <f for little endian
+
+    def get_int_arr(self):
+        byte_length = len(self.array)
+        result = []
+        start_index = 6
+        bytes_to_read = 4
+        number_of_readings = 16
+        for index in [
+            start_index + bytes_to_read * i for i in range(number_of_readings)
+        ]:
+            result.append(self.get_int_32(index))
+        return result
+
+
+# @dataclasses.dataclass
+# class Acceleration:
+#     timestamp: int
+#     timestamp_local: str
+#     ax: float
+#     ay: float
+#     az: float
+#     fall_state: str
+
+#     def as_csv_field(self):
+#         return [self.timestamp, self.timestamp_local, self.ax, self.ay, self.az, self.fall_state]
 
 
 def save_as_csv():
@@ -56,10 +128,10 @@ def save_as_csv():
             writer.writerow(field.as_csv_field())
 
 
-async def run_queue_consumer(queue: asyncio.Queue):
+async def run_queue_consumer(queue: asyncio.Queue, stop_signal: pyqtSignal):
     while True:
         data = await queue.get()
-        if data is None:
+        if data is None or thread_instance.stop_event.is_set:
             save_as_csv()
             logger.info(
                 "Got message from client about disconnection. Exiting consumer loop..."
@@ -88,8 +160,8 @@ async def run_ble_client(
     # This event is set if device disconnects or ctrl+c is pressed
     disconnected_event = asyncio.Event()
 
-    def raise_graceful_exit(*args):
-        disconnected_event.set()
+    # def raise_graceful_exit(*args):
+    #     disconnected_event.set()
 
     def disconnect_callback(client):
         logger.info("Disconnected callback called!")
@@ -102,7 +174,7 @@ async def run_ble_client(
         msg = "Data: ts: {}, ax: {}, ay: {}, az: {}".format(
             d.get_uint_32(2), d.get_float_32(6), d.get_float_32(10), d.get_float_32(14)
         )
-        print(msg)
+        # print(msg)
 
         acc_data = Acceleration(
             timestamp=d.get_uint_32(2),
@@ -120,11 +192,10 @@ async def run_ble_client(
         async with BleakClient(
             address, disconnected_callback=disconnect_callback
         ) as client:
-
             loop = asyncio.get_event_loop()
             # Add signal handler for ctrl+c
-            signal.signal(signal.SIGINT, raise_graceful_exit)
-            signal.signal(signal.SIGTERM, raise_graceful_exit)
+            # signal.signal(signal.SIGINT, raise_graceful_exit)
+            # signal.signal(signal.SIGTERM, raise_graceful_exit)
 
             # Start notifications and subscribe to acceleration @ 13Hz
             logger.info("Enabling notifications")
@@ -186,14 +257,21 @@ class ThreadManager(QObject):
     def __init__(self):
         super().__init__()
         self.thread = QThread()
+        self.stop_event = asyncio.Event()
         self.moveToThread(self.thread)
         self.thread.started.connect(self.run_asyncio_loop)
+        self.stop_signal.connect(self.set_stop_event)
         self.thread.start()
 
     def run_asyncio_loop(self):
+        asyncio.run(main(SENSOR_ID, self.data_received, self.stop_signal))
+
+    def set_stop_event(self):
+        self.stop_event.set()
         asyncio.run(main(SENSOR_ID, self.data_received))
 
     def stop(self):
+        self.stop_signal.emit()
         self.thread.quit()
         self.thread.wait()
 
@@ -201,17 +279,34 @@ class ThreadManager(QObject):
         self.stop()
 
 
+async def main(
+    end_of_serial: str, data_received_signal: pyqtSignal, stop_signal: pyqtSignal
+):
+    queue = asyncio.Queue()
+    client_task = run_ble_client(end_of_serial, queue, data_received_signal)
+    consumer_task = run_queue_consumer(queue, stop_signal)
+    await asyncio.gather(client_task, consumer_task)
+    logger.info("Main method done!")
+
+
+# def run_asyncio_loop(end_of_serial: str):
+#     asyncio.run(main(end_of_serial=end_of_serial))
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     thread_instance = ThreadManager()
+
     annotation = AnnotateAccelerometerData()
-    # thread_instance.data_received.connect(annotation.on_data_received)
+
+    thread_instance.data_received.connect(annotation.on_data_received)
 
     annotation.show()
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main(SENSOR_ID, thread_instance.data_received))
+    # asyncio.run(main(SENSOR_ID, thread_instance.data_received))
 
+    app.aboutToQuit.connect(thread_instance.stop)
     app.exec()
 
     # threading.Thread(target=run_asyncio_loop, args=(SENSOR_ID,), daemon=True).start()
