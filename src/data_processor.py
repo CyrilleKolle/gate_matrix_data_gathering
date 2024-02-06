@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from data_validator import DataValidator
 from motion_features import MotionFeatureCalculator
 
 
@@ -23,11 +24,13 @@ class DataProcessor:
             logger.error(f"No file found at {file_path}")
             raise FileNotFoundError(f"No file found at {file_path}")
 
-    def process_data(self, data):
+    def process_data(self, data, filename):
         try:
+            validated_data = DataValidator(data, filename=filename).validate()
             motion_feature_calculator = MotionFeatureCalculator(
-                data, "timestamp", ["ax", "ay", "az"]
+                validated_data, "timestamp", ["ax", "ay", "az"]
             )
+
             logger.info("Processing data")
             processed_data = motion_feature_calculator.calculate_all_features()
             logger.info("Data processed")
@@ -48,7 +51,7 @@ class DataProcessor:
 
         try:
             data = self.load_data(file)
-            processed_data = self.process_data(data)
+            processed_data = self.process_data(data, file)
             self.save_data(processed_data, f"processed_{file}")
             logger.info(f"File {file} processed successfully")
         except FileNotFoundError as e:
