@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import QApplication
 
 from models import Acceleration
 from annotation import AnnotateAccelerometerData
-from src.binary_parser import DataView
+# from src.binary_parser import DataView
 
 SENSOR_ID = "223430000278"
 WRITE_CHARACTERISTIC_UUID = "34800001-7185-4d5d-b431-630e7050e8f0"
@@ -241,10 +241,19 @@ async def run_ble_client(
         print("Sensor  ******" + end_of_serial, "not found!")
 
 
-async def main(end_of_serial: str, data_received_signal: pyqtSignal):
+# async def main(end_of_serial: str, data_received_signal: pyqtSignal):
+#     queue = asyncio.Queue()
+#     client_task = run_ble_client(end_of_serial, queue, data_received_signal)
+#     consumer_task = run_queue_consumer(queue)
+#     await asyncio.gather(client_task, consumer_task)
+#     logger.info("Main method done!")
+    
+async def main(
+    end_of_serial: str, data_received_signal: pyqtSignal, stop_signal: pyqtSignal
+):
     queue = asyncio.Queue()
     client_task = run_ble_client(end_of_serial, queue, data_received_signal)
-    consumer_task = run_queue_consumer(queue)
+    consumer_task = run_queue_consumer(queue, stop_signal)
     await asyncio.gather(client_task, consumer_task)
     logger.info("Main method done!")
 
@@ -253,6 +262,7 @@ async def main(end_of_serial: str, data_received_signal: pyqtSignal):
 #     asyncio.run(main(end_of_serial=end_of_serial))
 class ThreadManager(QObject):
     data_received = pyqtSignal(Acceleration)
+    stop_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -268,7 +278,7 @@ class ThreadManager(QObject):
 
     def set_stop_event(self):
         self.stop_event.set()
-        asyncio.run(main(SENSOR_ID, self.data_received))
+        asyncio.run(main(SENSOR_ID, self.data_received, self.stop_signal))
 
     def stop(self):
         self.stop_signal.emit()
@@ -277,16 +287,6 @@ class ThreadManager(QObject):
 
     def __del__(self):
         self.stop()
-
-
-async def main(
-    end_of_serial: str, data_received_signal: pyqtSignal, stop_signal: pyqtSignal
-):
-    queue = asyncio.Queue()
-    client_task = run_ble_client(end_of_serial, queue, data_received_signal)
-    consumer_task = run_queue_consumer(queue, stop_signal)
-    await asyncio.gather(client_task, consumer_task)
-    logger.info("Main method done!")
 
 
 # def run_asyncio_loop(end_of_serial: str):
