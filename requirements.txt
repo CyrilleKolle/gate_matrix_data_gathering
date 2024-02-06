@@ -1,2 +1,10 @@
 PyQt6
 bleak
+pandas
+matplotlib
+seaborn
+plotly
+numpy
+plotly.express
+scipy
+nbformat
